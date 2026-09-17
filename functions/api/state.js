@@ -1,28 +1,37 @@
 // Cloudflare Pages Function: GET /api/state
 //
-// Serves the live league data out of KV. If nothing is found under the
-// expected key, returns 404 — the site's front-end already falls back
-// to its own built-in season data whenever this endpoint doesn't
-// respond with 200, so that's safe.
+// Serves the live league data out of KV. Rather than requiring the KV
+// binding to have one specific variable name, this scans the Function's
+// environment for whatever is bound that looks like a KV namespace
+// (has .get and .put methods) and uses that — so it doesn't matter
+// what you named the binding in the dashboard.
 //
-// Wrapped in try/catch so any unexpected failure (bad binding, KV
-// outage, etc.) comes back as a readable message instead of an opaque
-// platform 500.
+// If nothing is found under the expected key, returns 404 — the site's
+// front-end already falls back to its own built-in season data
+// whenever this endpoint doesn't respond with 200, so that's safe.
 
 const KV_KEY = 'gmhl-data';
+
+function findKVBinding(env) {
+  for (const key of Object.keys(env || {})) {
+    const val = env[key];
+    if (val && typeof val.get === 'function' && typeof val.put === 'function') {
+      return val;
+    }
+  }
+  return null;
+}
 
 export async function onRequestGet(context) {
   try {
     const { env } = context;
 
-    if (!env.GMHL_STATE) {
-      return new Response('ERROR: KV namespace not bound to GMHL_STATE. Check Settings -> Functions -> KV namespace bindings.', { status: 500 });
-    }
-    if (typeof env.GMHL_STATE.get !== 'function') {
-      return new Response('ERROR: GMHL_STATE is bound but is not a KV namespace (wrong binding type).', { status: 500 });
+    const kv = findKVBinding(env);
+    if (!kv) {
+      return new Response('ERROR: No KV namespace binding found on this Function. Go to Settings -> Functions -> KV namespace bindings and make sure at least one KV namespace is bound (any variable name works now).', { status: 500 });
     }
 
-    const stored = await env.GMHL_STATE.get(KV_KEY);
+    const stored = await kv.get(KV_KEY);
     if (!stored) {
       return new Response('Not found', { status: 404 });
     }
