@@ -1,15 +1,16 @@
 // Cloudflare Pages Function: GET /api/state
 //
-// Serves the live league data out of KV. If nothing has been published
-// yet (fresh KV namespace), returns 404 — the site's front-end already
-// falls back to its own built-in season data whenever this endpoint
-// doesn't respond with 200, so that's safe.
+// Serves the live league data out of KV. If nothing is found under the
+// expected key, returns 404 — the site's front-end already falls back
+// to its own built-in season data whenever this endpoint doesn't
+// respond with 200, so that's safe.
 //
-// SETUP REQUIRED: in your Cloudflare Pages project, go to
-// Settings -> Functions -> KV namespace bindings, and bind a KV
-// namespace to the variable name GMHL_STATE. If you already have a KV
-// namespace under a different binding name, either rename the binding
-// to GMHL_STATE or update the two `env.GMHL_STATE` references below.
+// SETUP REQUIRED: bind your existing KV namespace (the one already
+// holding the "gmhl-data" key) to this Pages project under the
+// variable name GMHL_STATE, in Settings -> Functions -> KV namespace
+// bindings.
+
+const KV_KEY = 'gmhl-data';
 
 export async function onRequestGet(context) {
   const { env } = context;
@@ -18,7 +19,7 @@ export async function onRequestGet(context) {
     return new Response('KV namespace not bound (GMHL_STATE)', { status: 500 });
   }
 
-  const stored = await env.GMHL_STATE.get('state');
+  const stored = await env.GMHL_STATE.get(KV_KEY);
   if (!stored) {
     return new Response('Not found', { status: 404 });
   }
