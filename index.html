@@ -542,6 +542,39 @@ function nextId(arr){
 function isPlayed(g){
   return g.hg != null && g.ag != null;
 }
+function gameType(g){
+  return g.type || 'regular';
+}
+function countsTowardStandings(g){
+  return gameType(g) !== 'exhibition';
+}
+function mondayCutoverForDate(iso){
+  var d = parseISO(iso);
+  var dow = d.getDay(); /* 0 = Sunday */
+  var daysToMonday = (8 - dow) % 7; /* days from this date to the Monday on/after it */
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + daysToMonday, 23, 0, 0, 0);
+}
+function isRoundSettled(st, iso, now){
+  var anyPlayed = st.schedule.some(function(g){ return g.date === iso && isPlayed(g); });
+  return anyPlayed || now.getTime() >= mondayCutoverForDate(iso).getTime();
+}
+/* Which game day is "next" and which is "last", for the homepage. A round
+   flips from "next" to "last" as soon as a result has been logged for it,
+   or — if nobody has entered scores yet — automatically at 11:00pm on the
+   Monday following that game day, so the homepage keeps moving forward on
+   schedule even when score entry is running late. */
+function getHomeRoundDates(st, now){
+  now = now || new Date();
+  var dates = [];
+  st.schedule.forEach(function(g){ if(dates.indexOf(g.date) === -1) dates.push(g.date); });
+  dates.sort();
+  var lastDate = null, nextDate = null;
+  dates.forEach(function(d){
+    if(isRoundSettled(st, d, now)) lastDate = d;
+    else if(nextDate === null) nextDate = d;
+  });
+  return {lastDate: lastDate, nextDate: nextDate};
+}
 function timeToMinutes(t){
   var m = /^(\d{1,2}):(\d{2})\s*([ap]m)$/i.exec((t||'').trim());
   if(!m) return 0;
@@ -591,7 +624,7 @@ function groupByDate(games){
 function computeStandings(st){
   var table = {};
   st.teams.forEach(function(t){ table[t.name] = {team:t, gp:0,w:0,t:0,l:0,pts:0,gf:0,ga:0,pim:0,last:[]}; });
-  var played = sortGamesChrono(st.schedule.filter(isPlayed));
+  var played = sortGamesChrono(st.schedule.filter(function(g){ return isPlayed(g) && countsTowardStandings(g); }));
   played.forEach(function(g){
     var h = table[g.home], a = table[g.away];
     if(!h || !a) return;
@@ -601,8 +634,11 @@ function computeStandings(st){
     else { h.t++; a.t++; h.pts++; a.pts++; h.last.push('T'); a.last.push('T'); }
   });
   /* PIM is tallied from every logged penalty, regardless of whether the game's
-     final score has been entered yet, so it stays in sync as penalties are recorded. */
+     final score has been entered yet, so it stays in sync as penalties are recorded.
+     Exhibition games don't count towards the standings, so their penalties are
+     excluded from this tally too. */
   st.schedule.forEach(function(g){
+    if(!countsTowardStandings(g)) return;
     (g.penalties || []).forEach(function(p){
       var side = table[p.team];
       if(side) side.pim += (p.minutes || 0);
@@ -620,6 +656,7 @@ function computeStandings(st){
 function teamPlayerPim(st, teamName, playerName){
   var total = 0;
   st.schedule.forEach(function(g){
+    if(!countsTowardStandings(g)) return;
     (g.penalties || []).forEach(function(p){
       if(p.team === teamName && p.player === playerName) total += (p.minutes || 0);
     });
@@ -688,20 +725,27 @@ function renderFooter(st){
 
 /* ---------------- render: game row (shared by home/schedule/results/team modal) ---------------- */
 
-function renderGameRow(st, g){
+function renderGameRow(st, g, opts){
+  opts = opts || {};
   var home = teamByName(st, g.home), away = teamByName(st, g.away);
   var played = isPlayed(g);
   var homeWin = played && g.hg > g.ag;
   var awayWin = played && g.ag > g.hg;
+  var type = gameType(g);
+  var typeBadge = type === 'exhibition' ? ' <span class="pill pill-muted" style="margin-left:6px;">Exhibition</span>'
+    : (type === 'forfeit' ? ' <span class="pill pill-loss" style="margin-left:6px;">Forfeit</span>' : '');
   var scoreHtml;
   if(played){
     scoreHtml = '<div class="game-score"><span class="'+(homeWin?'winner':'loser')+'">'+g.hg+'</span>'
       + '<span style="color:var(--text-faint);font-weight:400;">&ndash;</span>'
       + '<span class="'+(awayWin?'winner':'loser')+'">'+g.ag+'</span>'
       + (g.ot ? ' <span class="pill pill-tie" style="margin-left:6px;">OT</span>' : '')
+      + typeBadge
       + '</div>';
+  } else if(opts.resultsContext){
+    scoreHtml = '<div class="game-time"><span class="pill pill-ice">Score Pending</span>'+typeBadge+'</div>';
   } else {
-    scoreHtml = '<div class="game-time">'+esc(fmtTime(g.time))+'</div>';
+    scoreHtml = '<div class="game-time">'+esc(fmtTime(g.time))+typeBadge+'</div>';
   }
   return '<div class="game-row '+(played?'final':'')+'" data-home="'+esc(g.home)+'" data-away="'+esc(g.away)+'">'
     + '<span class="pill '+(played?'pill-muted':'pill-ice')+'" style="width:64px;justify-content:center;flex:none;">'+fmtDateShort(g.date)+'</span>'
@@ -741,30 +785,25 @@ function renderLast5(last){
 
 function renderHomePage(st){
   var standings = computeStandings(st);
-  var upcoming = st.schedule.filter(function(g){ return !isPlayed(g); });
-  var played = st.schedule.filter(isPlayed);
-  var nextDate = upcoming.length ? sortGamesChrono(upcoming)[0].date : null;
-  var nextGames = nextDate ? sortGamesChrono(upcoming.filter(function(g){ return g.date===nextDate; })) : [];
-  var playedSorted = sortGamesChrono(played);
-  var lastDate = playedSorted.length ? playedSorted[playedSorted.length-1].date : null;
-  var lastGames = lastDate ? sortGamesChrono(played.filter(function(g){ return g.date===lastDate; })) : [];
+  var rounds = getHomeRoundDates(st, new Date());
+  var nextDate = rounds.nextDate;
+  var lastDate = rounds.lastDate;
+  var nextGames = nextDate ? sortGamesChrono(st.schedule.filter(function(g){ return g.date===nextDate; })) : [];
+  var lastGames = lastDate ? sortGamesChrono(st.schedule.filter(function(g){ return g.date===lastDate; })) : [];
 
   var today = new Date(); today.setHours(0,0,0,0);
   var seasonStart = parseISO(st.seasonStart);
   var daysToStart = Math.round((seasonStart - today) / 86400000);
+  var hasUpcoming = st.schedule.some(function(g){ return !isPlayed(g); });
 
   var eyebrow;
   if(daysToStart > 0){
     eyebrow = '<span class="dot"></span> Season Opens '+fmtDateLong(st.seasonStart)+' &middot; '+daysToStart+' Day'+(daysToStart===1?'':'s')+' To Go';
-  } else if(upcoming.length){
+  } else if(hasUpcoming){
     eyebrow = '<span class="dot"></span> '+esc(st.season)+' Season Underway';
   } else {
     eyebrow = '<span class="dot"></span> '+esc(st.season)+' Season Complete';
   }
-
-  var featureGames = lastGames.length ? lastGames : nextGames;
-  var featureLabel = lastGames.length ? 'Latest Results' : 'Up Next';
-  var featureDate = lastGames.length ? lastDate : nextDate;
 
   var nameParts = st.leagueName.split(' ');
   var nameFirst = nameParts[0];
@@ -786,11 +825,22 @@ function renderHomePage(st){
 
     + '<div class="container section">'
     + '<div class="grid grid-3" style="align-items:start;">'
-    + '<div class="card" style="grid-column:span 2;">'
-    + '<div class="section-head" style="margin-bottom:16px;"><div><span class="kicker">'+featureLabel+'</span>'
-    + '<h2 style="font-size:22px;">'+(featureDate ? fmtDateLong(featureDate) : 'Schedule TBD')+'</h2></div>'
-    + '<a class="btn btn-outline btn-sm" href="#'+(lastGames.length?'results':'schedule')+'">'+(lastGames.length?'All Results':'Full Schedule')+'</a></div>'
-    + (featureGames.length ? featureGames.map(function(g){ return renderGameRow(st,g); }).join('') : '<div class="admin-empty">No games scheduled yet.</div>')
+    + '<div style="grid-column:span 2;display:flex;flex-direction:column;gap:16px;">'
+
+    + '<div class="card">'
+    + '<div class="section-head" style="margin-bottom:16px;"><div><span class="kicker">Next Week&rsquo;s Games</span>'
+    + '<h2 style="font-size:22px;">'+(nextDate ? fmtDateLong(nextDate) : 'Schedule TBD')+'</h2></div>'
+    + '<a class="btn btn-outline btn-sm" href="#schedule">Full Schedule</a></div>'
+    + (nextGames.length ? nextGames.map(function(g){ return renderGameRow(st,g); }).join('') : '<div class="admin-empty">No games scheduled yet.</div>')
+    + '</div>'
+
+    + '<div class="card">'
+    + '<div class="section-head" style="margin-bottom:16px;"><div><span class="kicker">Last Week&rsquo;s Results</span>'
+    + '<h2 style="font-size:22px;">'+(lastDate ? fmtDateLong(lastDate) : 'No Games Played Yet')+'</h2></div>'
+    + '<a class="btn btn-outline btn-sm" href="#results">All Results</a></div>'
+    + (lastGames.length ? lastGames.map(function(g){ return renderGameRow(st,g,{resultsContext:true}); }).join('') : '<div class="admin-empty">Results will appear here once the season is underway.</div>')
+    + '</div>'
+
     + '</div>'
     + '<div class="card"><div class="section-head" style="margin-bottom:16px;"><div><span class="kicker">'+esc(st.season)+'</span><h2 style="font-size:22px;">Full Standings</h2></div></div>'
     + renderStandingsMini(standings)
@@ -1261,10 +1311,16 @@ function renderScoresList(){
   if(!games.length) return '<div class="admin-empty">No games found.</div>';
   return games.map(function(g){
     var played = isPlayed(g);
+    var type = gameType(g);
+    var typeTag = type === 'exhibition' ? '<span class="pill pill-muted">Exhibition</span>'
+      : (type === 'forfeit' ? '<span class="pill pill-loss">Forfeit</span>' : '');
     return '<div class="admin-row"><div class="admin-row-head"><div>'
       + '<div class="admin-row-title">'+esc(g.home)+' vs '+esc(g.away)+'</div>'
       + '<div class="admin-row-sub">'+fmtDateShort(g.date)+' &middot; '+esc(fmtTime(g.time))+'</div></div>'
+      + '<div style="display:flex;gap:6px;align-items:center;">'
       + (played ? '<span class="pill pill-win">Final</span>' : '<span class="pill pill-ice">Upcoming</span>')
+      + typeTag
+      + '</div>'
       + '</div>'
       + '<div class="admin-score-inputs">'
       + '<span style="font-size:12px;color:var(--text-faint);width:74px;overflow:hidden;text-overflow:ellipsis;">'+esc(g.home)+'</span>'
@@ -1275,6 +1331,15 @@ function renderScoresList(){
       + '<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-faint);margin-left:auto;white-space:nowrap;">'
       + '<input type="checkbox" data-score="ot" data-id="'+g.id+'" '+(g.ot?'checked':'')+' style="width:auto;"> OT/SO</label>'
       + '</div>'
+      + '<div class="admin-score-inputs" style="margin-top:8px;">'
+      + '<label style="font-size:11px;color:var(--text-faint);white-space:nowrap;">Game Type</label>'
+      + '<select class="filter" data-gametype data-id="'+g.id+'" style="width:auto;flex:1;">'
+      + '<option value="regular" '+(type==='regular'?'selected':'')+'>Regular Season</option>'
+      + '<option value="exhibition" '+(type==='exhibition'?'selected':'')+'>Exhibition Game</option>'
+      + '<option value="forfeit" '+(type==='forfeit'?'selected':'')+'>Forfeit</option>'
+      + '</select>'
+      + '</div>'
+      + (type==='exhibition' ? '<div class="admin-row-sub" style="margin-top:6px;">Exhibition games do not count towards the standings.</div>' : '')
       + '<button class="btn btn-ghost btn-sm" style="margin-top:8px;" data-action="toggle-penalties" data-id="'+g.id+'" type="button">Penalties ('+((g.penalties||[]).length)+')</button>'
       + (scoresPenaltyOpenGameId === g.id ? renderPenaltyEditor(g) : '')
       + '</div>';
@@ -1471,6 +1536,17 @@ function onDocChange(e){
   if(e.target.id === 'sched-team-filter'){ applyTeamFilter('sched', e.target.value); return; }
   if(e.target.id === 'results-team-filter'){ applyTeamFilter('results', e.target.value); return; }
   if(e.target.matches && e.target.matches('[data-score="ot"]')){ handleScoreInput(e.target); return; }
+  if(e.target.matches && e.target.matches('[data-gametype]')){
+    var gtId = Number(e.target.dataset.id);
+    var gtGame = draft.schedule.find(function(x){ return x.id === gtId; });
+    if(gtGame){
+      gtGame.type = e.target.value;
+      markDirty();
+      var scoresListEl = document.getElementById('scores-list');
+      if(scoresListEl) scoresListEl.innerHTML = renderScoresList();
+    }
+    return;
+  }
   if(e.target.id === 'roster-team-select'){
     rosterTeamSlug = e.target.value;
     rosterFormState = null;
