@@ -2,22 +2,28 @@
 //
 // Body: { "password": string, "state": object }
 // Checks the executive password against an environment secret, then
-// writes the new state into KV under the "gmhl-data" key.
+// writes the new state under the "gmhl-data" key.
 //
-// Like state.js, this auto-detects whatever KV namespace is bound to
-// this Function (by duck-typing .get/.put methods) instead of
-// requiring one exact variable name.
+// Like state.js, this tries the real put() call against every
+// object-like binding on the environment and uses whichever one
+// actually succeeds, rather than assuming a specific variable name or
+// binding type.
 
 const KV_KEY = 'gmhl-data';
 
-function findKVBinding(env) {
-  for (const key of Object.keys(env || {})) {
-    const val = env[key];
-    if (val && typeof val.get === 'function' && typeof val.put === 'function') {
-      return val;
+async function kvPut(env, key, value) {
+  const attempts = [];
+  for (const name of Object.keys(env || {})) {
+    const val = env[name];
+    if (!val || typeof val !== 'object' || typeof val.put !== 'function') continue;
+    try {
+      await val.put(key, value);
+      return { ok: true, binding: name };
+    } catch (err) {
+      attempts.push(name + ': ' + (err && err.message ? err.message : String(err)));
     }
   }
-  return null;
+  return { ok: false, attempts };
 }
 
 export async function onRequestPost(context) {
@@ -46,14 +52,15 @@ export async function onRequestPost(context) {
       return new Response('ERROR: Invalid state payload (missing or malformed "schedule" array).', { status: 400 });
     }
 
-    const kv = findKVBinding(env);
-    if (!kv) {
-      return new Response('ERROR: No KV namespace binding found on this Function. Go to Settings -> Functions -> KV namespace bindings and make sure at least one KV namespace is bound (any variable name works now).', { status: 500 });
+    const result = await kvPut(env, KV_KEY, JSON.stringify(state));
+    if (!result.ok) {
+      return new Response(
+        'ERROR: No working KV namespace binding found.\nTried:\n' + (result.attempts.join('\n') || '(no object-like bindings on this environment at all)'),
+        { status: 500 }
+      );
     }
 
-    await kv.put(KV_KEY, JSON.stringify(state));
-
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ ok: true, binding: result.binding }), {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err) {
