@@ -1,42 +1,53 @@
 // Cloudflare Pages Function: GET /api/state
 //
-// Serves the live league data out of KV. Rather than requiring the KV
-// binding to have one specific variable name, this scans the Function's
-// environment for whatever is bound that looks like a KV namespace
-// (has .get and .put methods) and uses that — so it doesn't matter
-// what you named the binding in the dashboard.
+// Serves the live league data. Since we can't be 100% sure what the KV
+// binding is actually named (or, it turns out, what type of binding it
+// really is), this tries the real get() call against every object-like
+// binding on the environment and uses whichever one actually behaves
+// like a KV namespace (returns a string or null, doesn't throw).
 //
-// If nothing is found under the expected key, returns 404 — the site's
-// front-end already falls back to its own built-in season data
-// whenever this endpoint doesn't respond with 200, so that's safe.
+// If nothing usable is found, returns 500 with details on what was
+// tried. If a usable KV binding is found but has nothing stored yet,
+// returns 404 — the site's front-end already falls back to its own
+// built-in season data whenever this endpoint doesn't respond with
+// 200, so that's safe.
 
 const KV_KEY = 'gmhl-data';
 
-function findKVBinding(env) {
-  for (const key of Object.keys(env || {})) {
-    const val = env[key];
-    if (val && typeof val.get === 'function' && typeof val.put === 'function') {
-      return val;
+async function kvGet(env, key) {
+  const attempts = [];
+  for (const name of Object.keys(env || {})) {
+    const val = env[name];
+    if (!val || typeof val !== 'object' || typeof val.get !== 'function') continue;
+    try {
+      const result = await val.get(key);
+      if (result === null || typeof result === 'string') {
+        return { ok: true, value: result, binding: name };
+      }
+      attempts.push(name + ': returned a non-string, non-null value (wrong binding type)');
+    } catch (err) {
+      attempts.push(name + ': ' + (err && err.message ? err.message : String(err)));
     }
   }
-  return null;
+  return { ok: false, attempts };
 }
 
 export async function onRequestGet(context) {
   try {
     const { env } = context;
+    const result = await kvGet(env, KV_KEY);
 
-    const kv = findKVBinding(env);
-    if (!kv) {
-      return new Response('ERROR: No KV namespace binding found on this Function. Go to Settings -> Functions -> KV namespace bindings and make sure at least one KV namespace is bound (any variable name works now).', { status: 500 });
+    if (!result.ok) {
+      return new Response(
+        'ERROR: No working KV namespace binding found.\nTried:\n' + (result.attempts.join('\n') || '(no object-like bindings on this environment at all)'),
+        { status: 500 }
+      );
     }
-
-    const stored = await kv.get(KV_KEY);
-    if (!stored) {
+    if (result.value === null) {
       return new Response('Not found', { status: 404 });
     }
 
-    return new Response(stored, {
+    return new Response(result.value, {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store'
