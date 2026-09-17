@@ -1447,7 +1447,9 @@ async function doPublish(){
       return;
     }
     if(!res.ok){
-      toast('Could not publish changes (server error).');
+      var errText = '';
+      try { errText = await res.text(); } catch(e){}
+      toast('Could not publish (HTTP '+res.status+'): ' + (errText || 'no details returned'));
       return;
     }
     try { sessionStorage.setItem('gmhl_admin_pw', password); } catch(e){}
