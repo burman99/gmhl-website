@@ -4,11 +4,21 @@
 // Checks the executive password against an environment secret, then
 // writes the new state into KV under the "gmhl-data" key.
 //
-// Wrapped in try/catch so any unexpected failure (bad binding, KV
-// write error, etc.) comes back as a readable message instead of an
-// opaque platform 500 with no explanation.
+// Like state.js, this auto-detects whatever KV namespace is bound to
+// this Function (by duck-typing .get/.put methods) instead of
+// requiring one exact variable name.
 
 const KV_KEY = 'gmhl-data';
+
+function findKVBinding(env) {
+  for (const key of Object.keys(env || {})) {
+    const val = env[key];
+    if (val && typeof val.get === 'function' && typeof val.put === 'function') {
+      return val;
+    }
+  }
+  return null;
+}
 
 export async function onRequestPost(context) {
   try {
@@ -36,14 +46,12 @@ export async function onRequestPost(context) {
       return new Response('ERROR: Invalid state payload (missing or malformed "schedule" array).', { status: 400 });
     }
 
-    if (!env.GMHL_STATE) {
-      return new Response('ERROR: KV namespace not bound to GMHL_STATE. Check Settings -> Functions -> KV namespace bindings.', { status: 500 });
-    }
-    if (typeof env.GMHL_STATE.put !== 'function') {
-      return new Response('ERROR: GMHL_STATE is bound but is not a KV namespace (wrong binding type).', { status: 500 });
+    const kv = findKVBinding(env);
+    if (!kv) {
+      return new Response('ERROR: No KV namespace binding found on this Function. Go to Settings -> Functions -> KV namespace bindings and make sure at least one KV namespace is bound (any variable name works now).', { status: 500 });
     }
 
-    await env.GMHL_STATE.put(KV_KEY, JSON.stringify(state));
+    await kv.put(KV_KEY, JSON.stringify(state));
 
     return new Response(JSON.stringify({ ok: true }), {
       headers: { 'Content-Type': 'application/json' }
