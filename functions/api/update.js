@@ -3,16 +3,17 @@
 // Body: { "password": string, "state": object }
 // Checks the executive password against an environment secret, then
 // writes the new state into the same KV namespace /api/state reads
-// from.
+// from, under the "gmhl-data" key.
 //
 // SETUP REQUIRED:
-//   1. Settings -> Functions -> KV namespace bindings: bind a KV
-//      namespace to the variable name GMHL_STATE (same one used by
-//      functions/api/state.js).
-//   2. Settings -> Environment variables: add a variable named
-//      ADMIN_PASSWORD, mark it "Encrypt" (so it's a secret), and set it
-//      to whatever password your executives should type into the
-//      Executive Tools panel.
+//   1. Settings -> Functions -> KV namespace bindings: bind your
+//      existing KV namespace (the one with "gmhl-data" in it) to the
+//      variable name GMHL_STATE.
+//   2. Settings -> Environment variables: add ADMIN_PASSWORD as an
+//      encrypted/secret variable, set to whatever password executives
+//      should type into the Executive Tools panel to publish.
+
+const KV_KEY = 'gmhl-data';
 
 export async function onRequestPost(context) {
   const { request, env } = context;
@@ -39,7 +40,7 @@ export async function onRequestPost(context) {
     return new Response('KV namespace not bound (GMHL_STATE)', { status: 500 });
   }
 
-  await env.GMHL_STATE.put('state', JSON.stringify(state));
+  await env.GMHL_STATE.put(KV_KEY, JSON.stringify(state));
 
   return new Response(JSON.stringify({ ok: true }), {
     headers: { 'Content-Type': 'application/json' }
