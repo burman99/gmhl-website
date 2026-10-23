@@ -256,6 +256,34 @@
   .game-teams .loser{color:var(--text-faint);}
   .game-score .winner{color:var(--win);}
   .game-score .loser{color:var(--text-faint);}
+  /* ties: both teams stay highlighted */
+  .game-teams .tie{color:var(--text);}
+  .game-score .tie{color:var(--tie);}
+  /* clickable result rows (home "Last Week's Results" + Results page) */
+  .game-row.expandable{cursor:pointer;transition:border-color .15s ease, background .15s ease;}
+  .game-row.expandable:hover{border-color:var(--ice-dim);background:var(--surface-2);}
+  .game-clock{font-family:'JetBrains Mono';font-size:13px;font-weight:700;color:var(--text-dim);flex:none;min-width:70px;}
+  .game-toggle{margin-left:auto;flex:none;display:flex;align-items:center;gap:6px;font-family:'Barlow Condensed';font-weight:700;text-transform:uppercase;letter-spacing:0.06em;font-size:12px;color:var(--text-faint);}
+  .game-toggle .chev{display:inline-block;transition:transform .15s ease;}
+  .game-row.expandable:hover .game-toggle{color:var(--ice);}
+  .game-row.open{border-color:var(--ice-dim);}
+  .game-row.open .game-toggle .chev{transform:rotate(180deg);}
+  .game-details{display:none;flex-basis:100%;width:100%;border-top:1px solid var(--border-soft);padding-top:12px;margin-top:2px;cursor:default;}
+  .game-row.open .game-details{display:block;}
+  .pen-title{font-family:'Barlow Condensed';font-weight:700;text-transform:uppercase;letter-spacing:0.08em;font-size:12px;color:var(--text-faint);margin-bottom:6px;}
+  .pen-row{display:flex;align-items:center;gap:8px;font-size:13.5px;padding:7px 0;border-bottom:1px dashed var(--border-soft);}
+  .pen-row:last-child{border-bottom:none;}
+  .pen-row .pen-team{color:var(--text-dim);min-width:120px;}
+  .pen-row .pen-player{flex:1;color:var(--text);font-weight:600;}
+  .pen-row .pen-min{font-family:'JetBrains Mono';font-weight:700;font-size:12.5px;color:var(--loss);flex:none;}
+  .pen-empty{color:var(--text-faint);font-size:13px;padding:4px 0;}
+  /* projected division dividers (standings) */
+  .div-divider{display:flex;align-items:center;gap:10px;margin:8px 0 10px;font-family:'Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ice);white-space:nowrap;}
+  .div-divider::before{content:"";flex:0 0 14px;height:2px;background:var(--ice);border-radius:1px;}
+  .div-divider::after{content:"";flex:1;height:2px;background:var(--ice-dim);opacity:.5;border-radius:1px;}
+  table.data tr.div-row td{padding:6px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);}
+  table.data tr.div-row .div-divider{margin:0;}
+  @media (max-width: 720px){ .pen-row .pen-team{min-width:0;} .game-toggle .lbl{display:none;} }
   .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;}
   select.filter, input.filter{
     background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-s);
@@ -731,14 +759,18 @@ function renderGameRow(st, g, opts){
   var played = isPlayed(g);
   var homeWin = played && g.hg > g.ag;
   var awayWin = played && g.ag > g.hg;
+  var isTie = played && g.hg === g.ag;
+  /* winner = highlighted, tie = both highlighted, loser = dimmed */
+  var homeCls = played ? (homeWin ? 'winner' : (isTie ? 'tie' : 'loser')) : '';
+  var awayCls = played ? (awayWin ? 'winner' : (isTie ? 'tie' : 'loser')) : '';
   var type = gameType(g);
   var typeBadge = type === 'exhibition' ? ' <span class="pill pill-muted" style="margin-left:6px;">Exhibition</span>'
     : (type === 'forfeit' ? ' <span class="pill pill-loss" style="margin-left:6px;">Forfeit</span>' : '');
   var scoreHtml;
   if(played){
-    scoreHtml = '<div class="game-score"><span class="'+(homeWin?'winner':'loser')+'">'+g.hg+'</span>'
+    scoreHtml = '<div class="game-score"><span class="'+homeCls+'">'+g.hg+'</span>'
       + '<span style="color:var(--text-faint);font-weight:400;">&ndash;</span>'
-      + '<span class="'+(awayWin?'winner':'loser')+'">'+g.ag+'</span>'
+      + '<span class="'+awayCls+'">'+g.ag+'</span>'
       + (g.ot ? ' <span class="pill pill-tie" style="margin-left:6px;">OT</span>' : '')
       + typeBadge
       + '</div>';
@@ -747,16 +779,46 @@ function renderGameRow(st, g, opts){
   } else {
     scoreHtml = '<div class="game-time">'+esc(fmtTime(g.time))+typeBadge+'</div>';
   }
-  return '<div class="game-row '+(played?'final':'')+'" data-home="'+esc(g.home)+'" data-away="'+esc(g.away)+'">'
+  var expandable = !!opts.expandable;
+  /* game time is already shown for upcoming games; add it for results */
+  var clockHtml = (expandable && (played || opts.resultsContext)) ? '<span class="game-clock">'+esc(fmtTime(g.time))+'</span>' : '';
+  var rowAttrs = expandable ? ' data-action="toggle-game" tabindex="0" aria-expanded="false" title="Click to view penalties"' : '';
+  return '<div class="game-row '+(played?'final':'')+(expandable?' expandable':'')+'" data-home="'+esc(g.home)+'" data-away="'+esc(g.away)+'"'+rowAttrs+'>'
     + '<span class="pill '+(played?'pill-muted':'pill-ice')+'" style="width:64px;justify-content:center;flex:none;">'+fmtDateShort(g.date)+'</span>'
+    + clockHtml
     + '<div class="game-teams">'
-    + '<a href="#rosters/'+esc(home?home.slug:'')+'" class="tm '+(played?(homeWin?'winner':'loser'):'')+'">'+crestSpan(home,26)+esc(g.home)+'</a>'
+    + '<a href="#rosters/'+esc(home?home.slug:'')+'" class="tm '+homeCls+'">'+crestSpan(home,26)+esc(g.home)+'</a>'
     + '<span class="vs">vs</span>'
-    + '<a href="#rosters/'+esc(away?away.slug:'')+'" class="tm '+(played?(awayWin?'winner':'loser'):'')+'">'+crestSpan(away,26)+esc(g.away)+'</a>'
+    + '<a href="#rosters/'+esc(away?away.slug:'')+'" class="tm '+awayCls+'">'+crestSpan(away,26)+esc(g.away)+'</a>'
     + '</div>'
     + scoreHtml
     + '<div class="game-venue">'+esc(g.venue)+'</div>'
+    + (expandable ? '<span class="game-toggle"><span class="lbl">Penalties ('+((g.penalties||[]).length)+')</span><span class="chev">&#9662;</span></span>' + renderGameDetails(st, g) : '')
     + '</div>';
+}
+
+function renderGameDetails(st, g){
+  var pens = g.penalties || [];
+  var body = pens.length
+    ? pens.map(function(p){
+        return '<div class="pen-row">' + crestSpan(teamByName(st, p.team), 20)
+          + '<span class="pen-team">'+esc(p.team)+'</span>'
+          + '<span class="pen-player">'+esc(p.player)+'</span>'
+          + '<span class="pen-min">'+esc(p.minutes)+' PIM</span></div>';
+      }).join('')
+    : '<div class="pen-empty">No penalties recorded for this game.</div>';
+  return '<div class="game-details"><div class="pen-title">Penalties &middot; '+esc(fmtTime(g.time))+' game</div>' + body + '</div>';
+}
+function toggleGameRow(row){
+  var open = row.classList.toggle('open');
+  row.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+/* projected division labels, shown after every 4th team in the standings */
+var DIVISION_LABELS = ['Projected A Division','Projected B Division','Projected C Division','Projected D Division'];
+function divisionLabelAfter(i){
+  var n = i + 1;
+  return (n % 4 === 0 && n / 4 <= DIVISION_LABELS.length) ? DIVISION_LABELS[n / 4 - 1] : '';
 }
 
 function renderStandingsMini(rows){
@@ -768,7 +830,8 @@ function renderStandingsMini(rows){
       + '<a href="#rosters/'+r.team.slug+'" style="flex:1;font-weight:600;font-size:13.5px;color:var(--text);">'+esc(r.team.name)+'</a>'
       + '<span class="mono" style="color:var(--text-faint);font-size:12.5px;">'+r.gp+'GP</span>'
       + '<span class="mono pts" style="font-weight:700;">'+r.pts+'</span>'
-      + '</div>';
+      + '</div>'
+      + (divisionLabelAfter(i) ? '<div class="div-divider">'+divisionLabelAfter(i)+'</div>' : '');
   }).join('') + '</div>';
 }
 
@@ -814,7 +877,7 @@ function renderHomePage(st){
     + '<div class="hero-eyebrow">'+eyebrow+'</div>'
     + '<div class="hero-title-row"><img class="hero-logo" src="'+LOGO_DATA_URI+'" alt="'+esc(st.leagueShort)+' crest">'
     + '<h1>'+esc(nameFirst)+'<br><em>'+esc(nameRest)+'</em></h1></div>'
-    + '<p class="hero-sub">A full round-robin adult hockey season at the '+esc(st.venue)+'.</p>'
+    + '<p class="hero-sub">A '+st.teams.length+' team open men&rsquo;s league at the '+esc(st.venue)+'.</p>'
     + (st.generalEmail ? '<p style="color:var(--text-faint);font-size:14px;margin-top:6px;">Questions for the league? <a href="mailto:'+esc(st.generalEmail)+'" style="color:var(--ice);">'+esc(st.generalEmail)+'</a></p>' : '')
     + '<div class="hero-actions">'
     + '<a class="btn btn-primary" href="#schedule">View Schedule</a>'
@@ -838,7 +901,7 @@ function renderHomePage(st){
     + '<div class="section-head" style="margin-bottom:16px;"><div><span class="kicker">Last Week&rsquo;s Results</span>'
     + '<h2 style="font-size:22px;">'+(lastDate ? fmtDateLong(lastDate) : 'No Games Played Yet')+'</h2></div>'
     + '<a class="btn btn-outline btn-sm" href="#results">All Results</a></div>'
-    + (lastGames.length ? lastGames.map(function(g){ return renderGameRow(st,g,{resultsContext:true}); }).join('') : '<div class="admin-empty">Results will appear here once the season is underway.</div>')
+    + (lastGames.length ? lastGames.map(function(g){ return renderGameRow(st,g,{resultsContext:true, expandable:true}); }).join('') : '<div class="admin-empty">Results will appear here once the season is underway.</div>')
     + '</div>'
 
     + '</div>'
@@ -876,7 +939,7 @@ function renderResultsPage(st){
     + '<div class="filters"><select class="filter" id="results-team-filter"><option value="">All Teams</option>'+teamOpts+'</select></div>'
     + '<div id="results-groups">'
     + (groups.length ? groups.map(function(pair){
-        return '<div class="date-group" data-date="'+pair[0]+'"><h3>'+fmtDateLong(pair[0])+'</h3>'+pair[1].map(function(g){ return renderGameRow(st,g); }).join('')+'</div>';
+        return '<div class="date-group" data-date="'+pair[0]+'"><h3>'+fmtDateLong(pair[0])+'</h3>'+pair[1].map(function(g){ return renderGameRow(st,g,{expandable:true}); }).join('')+'</div>';
       }).join('') : '<div class="empty"><div class="big">📅</div><h3>Season Opens '+fmtDateLong(st.seasonStart)+'</h3><p>Results will be posted here after the first games are played. Check the Schedule page for game times.</p></div>')
     + '</div></div></section>';
 }
@@ -895,7 +958,8 @@ function renderStandingsPage(st){
           + '<td><div class="standings-team">'+crestSpan(r.team,28)+'<a href="#rosters/'+r.team.slug+'" class="tn">'+esc(r.team.name)+'</a></div></td>'
           + '<td class="num">'+r.gp+'</td><td class="num">'+r.w+'</td><td class="num">'+r.t+'</td><td class="num">'+r.l+'</td>'
           + '<td class="num pts">'+r.pts+'</td><td class="num">'+r.gf+'</td><td class="num">'+r.ga+'</td>'
-          + '<td class="num">'+(r.diff>0?'+':'')+r.diff+'</td><td class="num">'+r.pim+'</td><td>'+renderLast5(r.last5)+'</td></tr>';
+          + '<td class="num">'+(r.diff>0?'+':'')+r.diff+'</td><td class="num">'+r.pim+'</td><td>'+renderLast5(r.last5)+'</td></tr>'
+          + (divisionLabelAfter(i) ? '<tr class="div-row"><td colspan="12"><div class="div-divider">'+divisionLabelAfter(i)+'</div></td></tr>' : '');
       }).join('')
     + '</tbody></table></div></div></section>';
 }
@@ -1521,6 +1585,10 @@ function onDocClick(e){
     else if(action === 'add-penalty') addPenalty(Number(el.dataset.game));
     else if(action === 'delete-penalty') deletePenalty(Number(el.dataset.game), Number(el.dataset.id));
     else if(action === 'save-captain') saveCaptainInfo();
+    else if(action === 'toggle-game'){
+      /* team-name links inside the row still go to the team; clicks inside the open penalty panel don't collapse it */
+      if(!e.target.closest('a') && !e.target.closest('.game-details')) toggleGameRow(el);
+    }
   }
   var tabBtn = e.target.closest('.drawer-tab');
   if(tabBtn) switchAdminTab(tabBtn.dataset.tab);
@@ -1577,6 +1645,12 @@ function wireGlobalEvents(){
   document.addEventListener('input', onDocInput);
   document.addEventListener('change', onDocChange);
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeTeamModal(); });
+  document.addEventListener('keydown', function(e){
+    if((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('expandable')){
+      e.preventDefault();
+      toggleGameRow(e.target);
+    }
+  });
   window.addEventListener('hashchange', route);
 }
 
